@@ -24,6 +24,8 @@ Options:
                                 Example: '--oneline --name-only'
     --json                  Output results in JSON format for parsing
                                 Note: Overrides any --log options if specified
+    --files                 Show detailed file changes for each commit
+                                Note: Shows additions and deletions per file
     --help                  Display this help message
     --version               Show version information"
 
@@ -128,7 +130,7 @@ print_base_directories() {
 }
 
 process_repository() {
-    local dir=$1 start_date=$2 end_date=$3 authors=$4 log_options=$5
+    local dir=$1 start_date=$2 end_date=$3 authors=$4 log_options=$5 files_option=$6
 
     [ ! -d "$dir/.git" ] && return 1
 
@@ -145,25 +147,64 @@ process_repository() {
     local stat_option="--shortstat"
     [[ -n "$log_options" ]] && stat_option="$log_options"
 
-    # Get commits with forced color output
-    local commits
-    commits=$(git -c color.ui=always log --all \
-        $stat_option \
-        --find-renames \
-        --after="$start_date 00:00:00" \
-        --before="$end_date 23:59:59" \
-        $author_args 2>/dev/null)
-
-    [ -z "$commits" ] && return 1
-
+    local has_commits=false
     local repo_name=$(basename "$dir" | tr '[:lower:]' '[:upper:]')
-    echo "$repo_name [$dir]"
-    echo "━━━━━━━━━━━━━━━━━━━━"
-    echo
-    echo "$commits"
-    echo
 
-    return 0
+    if [[ "$files_option" == "true" ]]; then
+        # Get commits with file details
+        local commits=$(git log --all --format="%H" \
+            --after="$start_date 00:00:00" \
+            --before="$end_date 23:59:59" \
+            $author_args 2>/dev/null)
+        
+        if [[ -n "$commits" ]]; then
+            has_commits=true
+            echo "$repo_name [$dir]"
+            echo "━━━━━━━━━━━━━━━━━━━━"
+            echo
+
+            while IFS= read -r commit_hash; do
+                # Print commit header
+                git -c color.ui=always log -1 --pretty=format:"%C(yellow)commit %H%Creset%n%an <%ae>%n%ad%n%n    %s%n" "$commit_hash"
+                echo
+
+                # Get and print file changes
+                echo "    Changed files:"
+                git show --format="" --numstat "$commit_hash" | while read -r additions deletions file; do
+                    # Skip empty lines
+                    [[ -z "$additions" || -z "$file" ]] && continue
+                    
+                    # Handle binary files
+                    if [[ "$additions" == "-" ]]; then
+                        echo "        $file (binary)"
+                    else
+                        printf "        %s (+%s -%s)\n" "$file" "$additions" "$deletions"
+                    fi
+                done
+                echo
+            done <<< "$commits"
+        fi
+    else
+        # Original behavior for normal output
+        local commits
+        commits=$(git -c color.ui=always log --all \
+            $stat_option \
+            --find-renames \
+            --after="$start_date 00:00:00" \
+            --before="$end_date 23:59:59" \
+            $author_args 2>/dev/null)
+
+        if [[ -n "$commits" ]]; then
+            has_commits=true
+            echo "$repo_name [$dir]"
+            echo "━━━━━━━━━━━━━━━━━━━━"
+            echo
+            echo "$commits"
+            echo
+        fi
+    fi
+
+    [[ "$has_commits" == "true" ]] && return 0 || return 1
 }
 
 generate_json_output() {
@@ -193,7 +234,7 @@ generate_json_output() {
 }
 
 process_repository_json() {
-    local dir=$1 start_date=$2 end_date=$3 authors=$4 first_repo=$5
+    local dir=$1 start_date=$2 end_date=$3 authors=$4 first_repo=$5 files_option=$6
     
     [ ! -d "$dir/.git" ] && return 1
     
@@ -215,52 +256,58 @@ process_repository_json() {
             hash="${line#commit }"
             hash="${hash## }" # Remove leading spaces
             
-            # Get commit details
+            # Get commit details with proper indentation
             local details
-            details=$(git show -s --format='{
-  "commit": "%H",
-  "author": "%an",
-  "author_email": "%ae",
-  "author_date": "%ad",
-  "subject": "%s",
-  "body": "%b"' "$hash")
+            details=$(git show -s --format='        {
+          "commit": "%H",
+          "author": "%an",
+          "author_email": "%ae",
+          "author_date": "%ad",
+          "subject": "%s",
+          "body": "'"$(git show -s --format=%b "$hash" | awk '{printf "%s\\n", $0}' | sed 's/"/\\"/g')"'"' "$hash")
             commits+="$details"
             
-            # Get changed files with stats using --numstat
-            local files_output
-            files_output=$(git show --format="" --numstat "$hash")
-            
-            commits+=',
-  "changes": {'
-            
-            local first_file=true
-            while IFS=$'\t' read -r additions deletions file; do
-                # Skip empty lines
-                [[ -z "$additions" || -z "$file" ]] && continue
+            # Only include file changes if --files option is set
+            if [[ "$files_option" == "true" ]]; then
+                # Get changed files with stats using --numstat
+                local files_output
+                files_output=$(git show --format="" --numstat "$hash")
                 
-                if ! $first_file; then
-                    commits+=","
-                fi
-                first_file=false
+                commits+=',
+          "changes": {'
                 
-                # Handle binary files
-                if [[ "$additions" == "-" ]]; then
-                    additions="0"
-                    deletions="0"
-                fi
-                
-                # Escape quotes in filenames
-                file="${file//\"/\\\"}"
+                local first_file=true
+                while IFS=$'\t' read -r additions deletions file; do
+                    # Skip empty lines
+                    [[ -z "$additions" || -z "$file" ]] && continue
+                    
+                    if ! $first_file; then
+                        commits+=","
+                    fi
+                    first_file=false
+                    
+                    # Handle binary files
+                    if [[ "$additions" == "-" ]]; then
+                        additions="0"
+                        deletions="0"
+                    fi
+                    
+                    # Escape quotes in filenames
+                    file="${file//\"/\\\"}"
+                    
+                    commits+="
+            \"$file\": {
+              \"additions\": $additions,
+              \"deletions\": $deletions
+            }"
+                done <<< "$files_output"
                 
                 commits+="
-    \"$file\": {
-      \"additions\": $additions,
-      \"deletions\": $deletions
-    }"
-            done <<< "$files_output"
+          }"
+            fi
             
             commits+="
-  }}"
+        }"
         fi
     done < <(git log --all \
         --find-renames \
@@ -270,12 +317,12 @@ process_repository_json() {
     
     [ -z "$commits" ] && return 1
     
-    # Output repository entry
+    # Output repository entry with proper indentation
     if ! $first_repo; then echo "    ," ; fi
     echo "    {"
     echo "      \"repository\": \"$dir\","
     echo "      \"commits\": ["
-    echo "        $commits"
+    echo "$commits"
     echo "      ]"
     echo "    }"
     
@@ -292,6 +339,7 @@ main() {
     local date_spec=""
     local log_options=""
     local json_output=false
+    local files_option=false
 
     # Parse arguments
     while [[ $# -gt 0 ]]; do
@@ -318,6 +366,10 @@ main() {
                 ;;
             --json)
                 json_output=true
+                shift
+                ;;
+            --files)
+                files_option=true
                 shift
                 ;;
             --help)
@@ -383,7 +435,7 @@ main() {
                 $skip && continue
 
                 if process_repository_json "$repo" "$start_date" "$end_date" \
-                    "$(IFS='|'; echo "${authors[*]}")" "$first_repo"; then
+                    "$(IFS='|'; echo "${authors[*]}")" "$first_repo" "$files_option"; then
                     found_commits=true
                     first_repo=false
                 fi
@@ -417,7 +469,7 @@ main() {
                 fi
 
                 if process_repository "$repo" "$start_date" "$end_date" \
-                    "$(IFS='|'; echo "${authors[*]}")" "$log_options"; then
+                    "$(IFS='|'; echo "${authors[*]}")" "$log_options" "$files_option"; then
                     found_commits=true
                     last_repo_had_commits=true
                 else
