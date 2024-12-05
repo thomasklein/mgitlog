@@ -164,21 +164,27 @@ process_repository() {
             echo
 
             while IFS= read -r commit_hash; do
-                # Print commit header
-                git -c color.ui=always log -1 --pretty=format:"%C(yellow)commit %H%Creset%n%an <%ae>%n%ad%n%n    %s%n" "$commit_hash"
+                # Print commit header with body - disable pager with --no-pager
+                git --no-pager -c color.ui=always log -1 --pretty=format:"%C(yellow)commit %H%Creset%n%an <%ae>%n%ad%n%n    %s%n%n" "$commit_hash"
+                # Format commit body with proper indentation
+                git --no-pager log -1 --pretty=format:"%b" "$commit_hash" | sed 's/^/    /'
                 echo
 
+                # Get the summary line (total changes)
+                local summary
+                summary=$(git show --format="" --shortstat "$commit_hash")
+                echo "$summary"
+
                 # Get and print file changes
-                echo "    Changed files:"
                 git show --format="" --numstat "$commit_hash" | while read -r additions deletions file; do
                     # Skip empty lines
                     [[ -z "$additions" || -z "$file" ]] && continue
                     
                     # Handle binary files
                     if [[ "$additions" == "-" ]]; then
-                        echo "        $file (binary)"
+                        printf "   %s (binary)\n" "$file"
                     else
-                        printf "        %s (+%s -%s)\n" "$file" "$additions" "$deletions"
+                        printf "   %s (\033[32m+%s\033[0m \033[31m-%s\033[0m)\n" "$file" "$additions" "$deletions"
                     fi
                 done
                 echo

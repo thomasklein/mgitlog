@@ -63,8 +63,10 @@ Options:
                                 Example: '--oneline --name-only'
     --json                  Output results in JSON format for parsing
                                 Note: Overrides any --log options if specified
+    --files                 Show detailed file changes for each commit
+                                Note: Shows additions and deletions per file
     --help                  Display this help message
-    --version               Show version information"
+    --version               Show version information
 ```
 
 ## Output Formats
