@@ -5,7 +5,7 @@ set -euo pipefail
 # Multi Git Log - Lists commits from specified authors across multiple repositories
 # -----------------------------------------------------------------------------
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 USAGE="Usage: $(basename "$0") [OPTIONS]
 
