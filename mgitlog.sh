@@ -18,6 +18,7 @@ Options:
                                 - YYYY-MM-DD            (specific date)
                                 - today, yesterday      (common ranges)
                                 - week                  (current week, Mon-Sun)
+                                - lastweek             (last week, Mon-Sun)
                                 - YYYY-MM-DD..          (from date until today)
                                 - YYYY-MM-DD..YYYY-MM-DD (custom date range)
     --log STRING            Override default --shortstat output with custom git log options
@@ -56,6 +57,16 @@ get_date_range() {
                 local this_sunday=$(date -d "monday this week + 6 days" +%Y-%m-%d)
             fi
             echo "$this_monday $this_sunday"
+            ;;
+        lastweek)
+            if [[ "$OSTYPE" == "darwin"* ]]; then
+                local last_monday=$(date -v-monday -v-1w +%Y-%m-%d)
+                local last_sunday=$(date -v-monday -v+6d -v-1w +%Y-%m-%d)
+            else
+                local last_monday=$(date -d "monday last week" +%Y-%m-%d)
+                local last_sunday=$(date -d "monday last week + 6 days" +%Y-%m-%d)
+            fi
+            echo "$last_monday $last_sunday"
             ;;
         yesterday)
             if [[ "$OSTYPE" == "darwin"* ]]; then
@@ -409,7 +420,7 @@ main() {
     elif [[ "$date_spec" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}\.\.$ ]]; then
         local from_date="${date_spec%..*}"
         read -r start_date end_date < <(get_date_range "range" "$from_date")
-    elif [[ "$date_spec" =~ ^(today|yesterday|week)$ ]]; then
+    elif [[ "$date_spec" =~ ^(today|yesterday|week|lastweek)$ ]]; then
         read -r start_date end_date < <(get_date_range "$date_spec")
     else
         error "Invalid date format: $date_spec" "show_usage"

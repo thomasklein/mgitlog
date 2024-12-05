@@ -57,6 +57,7 @@ Options:
                                 - YYYY-MM-DD            (specific date)
                                 - today, yesterday      (common ranges)
                                 - week                  (current week, Mon-Sun)
+                                - lastweek             (last week, Mon-Sun)
                                 - YYYY-MM-DD..          (from date until today)
                                 - YYYY-MM-DD..YYYY-MM-DD (custom date range)
     --log STRING            Override default --shortstat output with custom git log options
