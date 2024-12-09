@@ -3,12 +3,13 @@
 [![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/thomasklein/mgitlog/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Run `git log` over multiple repositories in one go.
+Run `git log` across multiple repositories.
 
 ```bash
-$ mgitlog --mroot ~/business-unit-a --mroot ~/projects/business-unit-b --mheader --author=jane.smith@example.com --since "1 week ago"
+$ mgitlog --mroot ~/projects --mheader \
+--author=jane.smith@example.com --since "1 week ago"
 
-BUSINESS-UNIT-A [/home/jane/projects/business-unit-a]
+MESSAGING-SERVICE [/home/jane/projects/messaging-service]
 ━━━━━━━━━━━━━━━━━━━━
 
 commit fd7fc4397f0e8267babc03cb9ee93c8d535a2fd0
@@ -17,7 +18,7 @@ Date:   Wed Nov 20 14:20:25 2024 +0100
 
     feat: implement OAuth2 token validation and refresh mechanism
 
-NOTIFICATION-SERVICE [/home/jane/projects/business-unit-b/notification-service]
+MONITORING-SERVICE [/home/jane/projects/monitoring-service]
 ━━━━━━━━━━━━━━━━━━━━
 
 commit fd7fc4397f0e8267babc03cb9ee93c8xxxxxxx01
@@ -41,12 +42,15 @@ sudo ln -s "$(pwd)/mgitlog.sh" /usr/local/bin/mgitlog
 
 ## Options
 
+Note: Append any `git log` option. Below are the exclusive `mgitlog` options.
+
 ```bash
 Options:
-  --mroot DIR               Specify root directory. Defaults to current directory (can be used multiple times)
+  --mroot DIR               Specify root directory. Defaults to current directory 
+                              and checks direct subdirectorties (can be used multiple times)
   --mheader                 Show repository headers
   --mexclude PATTERN        Exclude repository path(s) from scanning (can be used multiple times)
-                                Supports partial matches (e.g., 'test' excludes 'test-repo')
+                              Supports partial matches (e.g., 'test' excludes 'test-repo')
   --mparallelize [NUMBER]   Enable parallel processing with optional number of processes (default: 4)
   --help                    Show this help message
   --version                 Show version information

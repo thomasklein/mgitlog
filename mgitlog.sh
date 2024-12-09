@@ -12,7 +12,6 @@ declare -a root_dirs
 declare -a git_args=()
 declare -a exclude_patterns=()
 show_header=false
-can_accept_header=true
 export git_args
 git_args_string=""
 parallel_processes=0  # 0 means no parallelization
@@ -24,10 +23,8 @@ parallel_processes=0  # 0 means no parallelization
 # Display help information
 show_help() {
     cat << EOF
-$TOOL_NAME version $VERSION
-View git logs across multiple repositories
-
-Usage: $TOOL_NAME [mroot DIR] [--mheader] [git log options]
+    
+Usage: $TOOL_NAME [options] [git log arguments] # Run 'git log' across multiple repositories
 
 Options:
   --mroot DIR               Specify root directory. Defaults to current directory (can be used multiple times)
@@ -36,7 +33,7 @@ Options:
                                 Supports partial matches (e.g., 'test' excludes 'test-repo')
   --mparallelize [NUMBER]   Enable parallel processing with optional number of processes (default: 4)
   --help                    Show this help message
-  --version                 Show version information
+  --version                 Show version information. Current is $VERSION
 EOF
 }
 
@@ -126,6 +123,9 @@ export -f get_repo_name
 # Argument Parsing
 #===============================================================================
 
+# Flag to indicate if we have started processing git log arguments
+git_args_started=false
+
 while [[ $# -gt 0 ]]; do
     case $1 in
         --version)
@@ -136,50 +136,55 @@ while [[ $# -gt 0 ]]; do
             show_help
             exit 0
             ;;
-        --mroot)
-            if [[ -n "${2:-}" ]]; then
-                root_dirs+=("$(eval echo "$2")")
-                shift 2
-                can_accept_header=true
-            else
-                echo "Error: --mroot requires a directory argument" >&2
-                echo >&2
+        --m*)
+            if $git_args_started; then
+                echo "Error: All mgitlog options (--m*) must appear before git log arguments" >&2
                 show_help >&2
                 exit 1
             fi
-            ;;
-        --mheader)
-            if ! $can_accept_header; then
-                echo "Error: --mheader must appear before any git log arguments" >&2
-                echo >&2
-                show_help >&2
-                exit 1
-            fi
-            show_header=true
-            shift
-            ;;
-        --mexclude)
-            if [[ -n "${2:-}" ]]; then
-                exclude_patterns+=("$2")
-                shift 2
-            else
-                echo "Error: --mexclude requires a pattern argument" >&2
-                echo >&2
-                show_help >&2
-                exit 1
-            fi
-            ;;
-        --mparallelize)
-            parallel_processes="${2:-4}"
-            if ! [[ "$parallel_processes" =~ ^[0-9]+$ ]]; then
-                parallel_processes=4
-                shift
-            else
-                shift 2
-            fi
+            case $1 in
+                --mroot)
+                    if [[ -n "${2:-}" ]]; then
+                        root_dirs+=("$(eval echo "$2")")
+                        shift 2
+                    else
+                        echo "Error: --mroot requires a directory argument" >&2
+                        show_help >&2
+                        exit 1
+                    fi
+                    ;;
+                --mheader)
+                    show_header=true
+                    shift
+                    ;;
+                --mexclude)
+                    if [[ -n "${2:-}" ]]; then
+                        exclude_patterns+=("$2")
+                        shift 2
+                    else
+                        echo "Error: --mexclude requires a pattern argument" >&2
+                        show_help >&2
+                        exit 1
+                    fi
+                    ;;
+                --mparallelize)
+                    parallel_processes="${2:-4}"
+                    if ! [[ "$parallel_processes" =~ ^[0-9]+$ ]]; then
+                        parallel_processes=4
+                        shift
+                    else
+                        shift 2
+                    fi
+                    ;;
+                *)
+                    echo "Error: Unknown mgitlog option: $1" >&2
+                    show_help >&2
+                    exit 1
+                    ;;
+            esac
             ;;
         *)
-            can_accept_header=false
+            git_args_started=true
             git_args+=("$1")
             shift
             ;;
