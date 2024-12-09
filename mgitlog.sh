@@ -54,7 +54,7 @@ print_repo_header() {
     
     repo_name=$(get_repo_name "$repo_path")
     echo "$repo_name [$repo_path]"
-    echo "━━━━━━━━━━━━━━━━━━━━"
+    echo "----------------------------------------"
     echo
 }
 
@@ -100,18 +100,20 @@ find_git_repos() {
         return
     fi
 
-    while IFS= read -r repo; do
+    find "$dir" -mindepth 1 -maxdepth 2 -type d -name .git 2>/dev/null | while read -r gitdir; do
+        local repo_path
+        repo_path=$(dirname "$gitdir")
         local excluded=false
         if (( ${#exclude_patterns[@]} > 0 )); then
             for pattern in "${exclude_patterns[@]}"; do
-                if [[ "$repo" == *"$pattern"* ]]; then
+                if [[ "$repo_path" == *"$pattern"* ]]; then
                     excluded=true
                     break
                 fi
             done
         fi
-        [[ "$excluded" == false ]] && echo "$repo"
-    done < <(find "$dir" -maxdepth 2 -type d -name .git -exec dirname {} \;)
+        [[ "$excluded" == false ]] && echo "$repo_path"
+    done
 }
 
 # Export functions for parallel processing
@@ -215,7 +217,7 @@ done
 # Process repositories in parallel or sequentially
 for root_dir in "${root_dirs[@]}"; do
     if [ "$parallel_processes" -gt 0 ]; then
-        find_git_repos "$root_dir" | xargs -P "$parallel_processes" -I {} bash -c "process_repository {} '$show_header' false '$git_args_string'"
+        find_git_repos "$root_dir" | xargs -P "$parallel_processes" -I {} bash -c "process_repository {} '$show_header' false '$git_args_string'" || true
     else
         while IFS= read -r repo; do
             process_repository "$repo" "$show_header" false "$git_args_string"

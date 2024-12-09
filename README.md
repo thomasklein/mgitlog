@@ -5,6 +5,8 @@
 
 Run `git log` across multiple repositories.
 
+> **Note**: Compatible with Unix-like systems (Linux, macOS). Windows is not supported.
+
 ```bash
 $ mgitlog --mroot ~/projects --mheader \
 --author=jane.smith@example.com --since "1 week ago"
