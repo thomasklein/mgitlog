@@ -23,7 +23,6 @@ parallel_processes=0  # 0 means no parallelization
 # Display help information
 show_help() {
     cat << EOF
-    
 Usage: $TOOL_NAME [options] [git log arguments] # Run 'git log' across multiple repositories
 
 Options:
