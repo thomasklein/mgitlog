@@ -16,6 +16,10 @@ export git_args
 git_args_string=""
 parallel_processes=0  # 0 means no parallelization
 
+# HOOK: Added - Document new environment variables for hooks
+# MGITLOG_BEFORE_CMD: If set, run this command before 'git log'.
+# MGITLOG_AFTER_CMD:  If set, run this command after 'git log' has been printed.
+
 #===============================================================================
 # Helper Functions
 #===============================================================================
@@ -33,6 +37,17 @@ Options:
   --mparallelize [NUMBER]   Enable parallel processing with optional number of processes (default: 4)
   --help                    Show this help message
   --version                 Show version information. Current is $VERSION
+
+Environment Variables:
+  MGITLOG_BEFORE_CMD        A command (or series of commands) to run *before* 'git log' in each repository.
+                            For example:
+                              MGITLOG_BEFORE_CMD="git pull --rebase"
+
+  MGITLOG_AFTER_CMD         A command (or series of commands) to run *after* 'git log' output is printed for each repository.
+                            For example:
+                              MGITLOG_AFTER_CMD="echo 'Done with repo!'"
+
+If these variables are unset or empty, no pre- or post-processing is done.
 EOF
 }
 
@@ -65,6 +80,14 @@ process_repository() {
     
     [[ -z "$repo_path" ]] && return
     
+    # HOOK: Run before-hook if MGITLOG_BEFORE_CMD is set
+    if [[ -n "${MGITLOG_BEFORE_CMD:-}" ]]; then
+        (cd "$repo_path" && eval "$MGITLOG_BEFORE_CMD") || {
+            echo "Warning: Pre-processing command failed in $repo_path. Skipping."
+            return
+        }
+    fi
+    
     local git_output
     if [[ -n "$git_args_str" ]]; then
         git_output=$(cd "$repo_path" && eval "git -c color.ui=always --no-pager log $git_args_str") || return
@@ -80,6 +103,13 @@ process_repository() {
             fi
             echo "$git_output"
             echo
+        }
+    fi
+
+    # HOOK: Run after-hook if MGITLOG_AFTER_CMD is set
+    if [[ -n "${MGITLOG_AFTER_CMD:-}" ]]; then
+        (cd "$repo_path" && eval "$MGITLOG_AFTER_CMD") || {
+            echo "Warning: Post-processing command failed in $repo_path."
         }
     fi
 }
