@@ -1,6 +1,6 @@
 # mgitlog (Multi git log)
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/thomasklein/mgitlog/releases)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/thomasklein/mgitlog/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Run `git log` across multiple repositories.
