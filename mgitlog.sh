@@ -22,7 +22,7 @@ declare -a git_args=()      # Stores arguments to pass to git log
 declare -a exclude_patterns=() # Patterns for repositories to exclude
 
 # Control flags and settings
-show_header=false           # Whether to show repository headers in output
+show_header="none"         # Header display mode: none, auto, always
 git_args_string=""         # Concatenated git arguments as a single string
 parallel_processes=0       # Number of parallel processes (0 = sequential)
 max_depth=2               # Maximum directory depth for repository scanning
@@ -42,7 +42,8 @@ Usage: $TOOL_NAME [options] [git log arguments] # Run 'git log' across multiple 
 Options:
   --mroot DIR               Specify root directory. Defaults to current directory 
                               and checks direct subdirectories (can be used multiple times)
-  --mheader                 Show repository headers
+  --mheader [style]         Show repository headers. Optional style: 'auto' (default), 'always'
+                              'auto' only shows headers when there are commits to display
   --mexclude PATTERN        Exclude repository path(s) from scanning (can be used multiple times)
                               Supports partial matches (e.g., 'test' excludes 'test-repo')
   --mparallelize [NUMBER]   Enable parallel processing with optional number of processes (default: 4)
@@ -74,7 +75,7 @@ execute_in_dir() {
     local cmd="$2"
     local error_msg="${3:-Command failed}"
     
-    (cd "$dir" && eval "$cmd") || {
+    (pushd "$dir" >/dev/null && eval "$cmd"; popd >/dev/null) || {
         echo "Warning: $error_msg in $dir" >&2
         return 1
     }
@@ -88,16 +89,16 @@ execute_in_dir() {
 format_repo_output() {
     local repo_path="$1"
     local content="$2"
-    local show_header="$3"
+    local header_mode="$3"
     
     local output=""
-    [[ "$show_header" == "true" ]] && {
+    if [[ "$header_mode" == "always" ]] || [[ "$header_mode" == "auto" && -n "$content" ]]; then
         local repo_name
         repo_name=$(basename "$repo_path" | tr '[:lower:]' '[:upper:]')
         output+="\n$repo_name [$repo_path]\n"
         output+="----------------------------------------\n\n"
-    }
-    output+="$content\n\n"
+    fi
+    [[ -n "$content" ]] && output+="$content\n\n"
     echo -e "$output"
 }
 
@@ -125,19 +126,19 @@ process_repository() {
     fi
     
     # Execute git log with provided arguments
-    local git_output
+    local git_output=""
     if [[ -n "$git_args_str" ]]; then
         git_output=$(execute_in_dir "$repo_path" "git --no-pager log $git_args_str") || return
     else
         git_output=$(execute_in_dir "$repo_path" "git --no-pager log") || return
     fi
 
-    # Only process and display if we have output
-    if [[ -n "$git_output" ]]; then
+    # Always format output if header mode is 'always', otherwise only when we have git output
+    if [[ "$show_header" == "always" ]] || [[ -n "$git_output" ]]; then
         format_repo_output "$repo_path" "$git_output" "$show_header"
         
         # HOOK: Post-processing (e.g., logging, additional formatting)
-        if [[ -n "${MGITLOG_AFTER_CMD:-}" ]]; then
+        if [[ -n "${MGITLOG_AFTER_CMD:-}" && -n "$git_output" ]]; then
             echo -e "$git_output" | execute_in_dir "$repo_path" "$MGITLOG_AFTER_CMD" "Post-processing command failed"
         fi
     fi
@@ -223,8 +224,13 @@ while [[ $# -gt 0 ]]; do
                     fi
                     ;;
                 --mheader)
-                    show_header=true
-                    shift
+                    if [[ "${2:-}" =~ ^(auto|always)$ ]]; then
+                        show_header="$2"
+                        shift 2
+                    else
+                        show_header="auto"
+                        shift
+                    fi
                     ;;
                 --mexclude)
                     if [[ -n "${2:-}" ]]; then
@@ -279,9 +285,9 @@ done
 
 # Convert all paths to absolute paths
 for i in "${!root_dirs[@]}"; do
-    if cd "${root_dirs[$i]}" 2>/dev/null; then
+    if pushd "${root_dirs[$i]}" >/dev/null 2>/dev/null; then
         root_dirs[$i]="$(pwd)"
-        cd - >/dev/null
+        popd >/dev/null
     else
         echo "Error: Cannot access directory: ${root_dirs[$i]}" >&2
         exit 1

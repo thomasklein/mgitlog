@@ -80,7 +80,8 @@ Options:
 ```bash
   --mroot DIR               Specify root directory. Defaults to current directory 
                               and checks direct subdirectories (can be used multiple times)
-  --mheader                 Show repository headers
+  --mheader [style]         Show repository headers. Optional style: 'auto' (default), 'always'
+                              'auto' only shows headers when there are commits to display
   --mexclude PATTERN        Exclude repository path(s) from scanning (can be used multiple times)
                               Supports partial matches (e.g., 'test' excludes 'test-repo')
   --mparallelize [NUMBER]   Enable parallel processing with optional number of processes (default: 4)
