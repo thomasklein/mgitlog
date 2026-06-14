@@ -48,6 +48,23 @@ Enhancement suggestions are tracked as GitHub issues. When creating an enhanceme
 * Keep functions focused and small
 * Use proper error handling
 
+## Running Tests
+
+The test suite uses [bats](https://github.com/bats-core/bats-core) and
+[shellcheck](https://www.shellcheck.net/):
+
+```bash
+# macOS
+brew install bats-core shellcheck
+# Debian/Ubuntu
+sudo apt-get install bats shellcheck
+
+shellcheck mgitlog.sh   # lint
+bats test/              # run tests
+```
+
+Both run automatically on every push and pull request via GitHub Actions.
+
 ## Development Process
 
 1. Fork the repo and create your branch from `main`

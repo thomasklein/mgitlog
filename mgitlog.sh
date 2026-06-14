@@ -14,7 +14,7 @@ set -euo pipefail
 # Configuration and Global Variables
 #===============================================================================
 TOOL_NAME="mgitlog"
-VERSION="1.0.0"
+VERSION="1.1.0"
 
 # Arrays to store multiple root directories and git arguments
 declare -a root_dirs        # Stores paths to search for repositories
@@ -26,6 +26,22 @@ show_header="none"         # Header display mode: none, auto, always
 git_args_string=""         # Concatenated git arguments as a single string
 parallel_processes=0       # Number of parallel processes (0 = sequential)
 max_depth=2               # Maximum directory depth for repository scanning
+interleave_mode=false      # Merge commits from all repos into one time-sorted stream
+json_mode=false            # Emit a JSON array of commit objects instead of text
+
+# Control characters used to frame machine-readable git output.
+# US (unit separator) between fields, NUL between records (via `git log -z`).
+US=$'\x1f'
+
+# Prefer 'fd' for repository discovery when available (much faster on large
+# trees, and skips into hidden dirs cleanly). Debian/Ubuntu package it as
+# 'fdfind'. Falls back to POSIX 'find' otherwise.
+FD_BIN=""
+if command -v fd >/dev/null 2>&1; then
+    FD_BIN="fd"
+elif command -v fdfind >/dev/null 2>&1; then
+    FD_BIN="fdfind"
+fi
 
 # Export git_args for subshell access
 export git_args
@@ -48,20 +64,14 @@ Options:
                               Supports partial matches (e.g., 'test' excludes 'test-repo')
   --mparallelize [NUMBER]   Enable parallel processing with optional number of processes (default: 4)
   --mscandepth NUMBER       Maximum depth when scanning for repositories (default: 2)
+  --minterleave             Merge commits from all repositories into a single stream,
+                              sorted newest-first by commit date across repos
+  --mjson                   Emit a JSON array of commit objects (implies --minterleave
+                              ordering; requires 'jq'). Ideal for piping into jq.
   --help                    Show this help message
   --version                 Show version information
-  
-Environment Variables:
-  MGITLOG_BEFORE_CMD        A command (or series of commands) to run *before* 'git log' in each repository.
-                              For example:
-                              MGITLOG_BEFORE_CMD="git pull --rebase" mgitlog
 
-  MGITLOG_AFTER_CMD         A command (or series of commands) to run *after* 'git log' output is printed for each repository.
-                              The result of the git log command is piped into the command.
-                              For example:
-                              MGITLOG_AFTER_CMD="echo 'Done with repo!'" mgitlog
-
-If these variables are unset or empty, no pre- or post-processing is done.
+All other arguments are passed straight through to 'git log'.
 EOF
 }
 
@@ -91,24 +101,18 @@ format_repo_output() {
     local content="$2"
     local header_mode="$3"
     
-    local output=""
     if [[ "$header_mode" == "always" ]] || [[ "$header_mode" == "auto" && -n "$content" ]]; then
         local repo_name
         repo_name=$(basename "$repo_path" | tr '[:lower:]' '[:upper:]')
-        output+="\n$repo_name [$repo_path]\n"
-        output+="----------------------------------------\n\n"
+        printf '\n%s [%s]\n' "$repo_name" "$repo_path"
+        printf '%s\n\n' "----------------------------------------"
     fi
-    [[ -n "$content" ]] && output+="$content\n\n"
-    echo -e "$output"
+    # Use printf (not echo -e) so backslash sequences in commit text are preserved verbatim
+    [[ -n "$content" ]] && printf '%s\n\n' "$content"
+    printf '\n'
 }
 
-# Process a single repository
-# This function:
-# 1. Runs pre-processing hook if defined
-# 2. Executes git log with provided arguments
-# 3. Formats the output
-# 4. Runs post-processing hook if defined
-#
+# Process a single repository: run git log and format the output.
 # Args:
 #   $1 - Path to repository
 #   $2 - Show header flag
@@ -117,14 +121,9 @@ process_repository() {
     local repo_path="$1"
     local show_header="$2"
     local git_args_str="$3"
-    
+
     [[ -z "$repo_path" ]] && return
-    
-    # HOOK: Pre-processing (e.g., git pull, checkout branch)
-    if [[ -n "${MGITLOG_BEFORE_CMD:-}" ]]; then
-        execute_in_dir "$repo_path" "$MGITLOG_BEFORE_CMD" "Pre-processing command failed" || return
-    fi
-    
+
     # Execute git log with provided arguments
     local git_output=""
     if [[ -n "$git_args_str" ]]; then
@@ -136,11 +135,6 @@ process_repository() {
     # Always format output if header mode is 'always', otherwise only when we have git output
     if [[ "$show_header" == "always" ]] || [[ -n "$git_output" ]]; then
         format_repo_output "$repo_path" "$git_output" "$show_header"
-        
-        # HOOK: Post-processing (e.g., logging, additional formatting)
-        if [[ -n "${MGITLOG_AFTER_CMD:-}" && -n "$git_output" ]]; then
-            echo -e "$git_output" | execute_in_dir "$repo_path" "$MGITLOG_AFTER_CMD" "Post-processing command failed"
-        fi
     fi
 }
 
@@ -168,15 +162,25 @@ find_git_repos() {
     local dir="$1"
     [[ ! -d "$dir" ]] && { echo "Error: Directory does not exist: $dir" >&2; return 1; }
 
-    # If the directory itself is a git repo, return it (unless excluded)
-    if [[ -d "$dir/.git" ]]; then
+    # If the directory itself is a git repo, return it (unless excluded).
+    # Use -e (not -d): linked worktrees and submodules use a .git *file*, not a dir.
+    if [[ -e "$dir/.git" ]]; then
         is_excluded "$dir" || echo "$dir"
         return
     fi
 
-    # Find all .git directories and output their parent paths
-    # -L flag follows symlinks for more thorough scanning
-    find -L "$dir" -maxdepth "$max_depth" -type d -name .git -prune 2>/dev/null | while read -r gitdir; do
+    # Find all .git entries (dirs or worktree/submodule files) and output their
+    # parent paths. Both backends follow symlinks and match the literal name
+    # '.git'; depth is relative to "$dir" with identical semantics.
+    {
+        if [[ -n "$FD_BIN" ]]; then
+            "$FD_BIN" --hidden --no-ignore --follow --absolute-path \
+                --max-depth "$max_depth" '^\.git$' "$dir" 2>/dev/null
+        else
+            # -L follows symlinks for more thorough scanning
+            find -L "$dir" -maxdepth "$max_depth" -name .git -prune 2>/dev/null
+        fi
+    } | while read -r gitdir; do
         local repo_path
         repo_path=$(dirname "$gitdir")
         is_excluded "$repo_path" || printf '%s\n' "$repo_path"
@@ -188,6 +192,87 @@ export -f execute_in_dir
 export -f format_repo_output
 export -f process_repository
 export -f is_excluded
+
+#===============================================================================
+# Interleaved / JSON Output
+#===============================================================================
+
+# Machine-readable git log format. Fields are US-separated; commits are
+# NUL-separated by `git log -z`. The leading field is the committer Unix
+# timestamp, used as the cross-repo sort key.
+#   1:%ct  2:%H  3:%an  4:%ae  5:%aI  6:%cI  7:%s  8:%b
+MACHINE_FMT='%ct%x1f%H%x1f%an%x1f%ae%x1f%aI%x1f%cI%x1f%s%x1f%b'
+
+# Emit one machine record per commit for a repo, with the repo path injected
+# as a second field so downstream rendering knows where each commit came from.
+# Output records stay NUL-separated.
+# Args: $1 repo path, $2 git args string
+emit_repo_records() {
+    local repo="$1" git_args_str="$2"
+
+    # Stream git's NUL-separated output directly into the loop. We must NOT
+    # capture it with $(...), because command substitution strips NUL bytes
+    # and would merge every commit of a repo into a single record.
+    # Re-emit each record as: <ct> US <repo> US <rest...> NUL
+    local rec ct rest
+    while IFS= read -r -d '' rec || [[ -n "$rec" ]]; do
+        [[ -z "$rec" ]] && continue
+        ct=${rec%%"$US"*}
+        rest=${rec#*"$US"}
+        printf '%s%s%s%s%s\0' "$ct" "$US" "$repo" "$US" "$rest"
+    done < <(execute_in_dir "$repo" \
+        "git --no-pager log -z $git_args_str --pretty=format:'$MACHINE_FMT'" 2>/dev/null)
+}
+
+# Collect records from every repo under all roots into one NUL-delimited,
+# newest-first stream on stdout. Collection is sequential so the merge is
+# deterministic; per-repo git calls dominate cost, not the merge.
+collect_all_records() {
+    local root repo
+    for root in "${root_dirs[@]}"; do
+        while IFS= read -r repo; do
+            emit_repo_records "$repo" "$git_args_string"
+        done < <(find_git_repos "$root")
+    done | sort -z -t "$US" -k1,1 -nr
+}
+
+# Render the collected stream as a unified, git-log-like text view.
+render_interleaved_text() {
+    local rec
+    local ct repo hash an ae aI cI subject body repo_name
+    while IFS= read -r -d '' rec || [[ -n "$rec" ]]; do
+        [[ -z "$rec" ]] && continue
+        # shellcheck disable=SC2034  # ct/aI are parsed for position but not shown in text view
+        IFS="$US" read -r ct repo hash an ae aI cI subject body <<< "$rec"
+        repo_name=$(basename "$repo" | tr '[:lower:]' '[:upper:]')
+        printf 'commit %s  [%s]\n' "$hash" "$repo_name"
+        printf 'Author: %s <%s>\n' "$an" "$ae"
+        printf 'Date:   %s\n\n' "$cI"
+        printf '    %s\n' "$subject"
+        [[ -n "$body" ]] && printf '%s\n' "$body" | sed 's/^/    /'
+        printf '\n'
+    done
+}
+
+# Render the collected stream as a JSON array via a single jq invocation.
+# jq does the escaping, so commit text with quotes/backslashes/newlines is safe.
+render_json() {
+    jq -Rs '
+        split("\u0000")
+        | map(select(length > 0))
+        | map(split("\u001f"))
+        | map({
+            repo:        .[1],
+            hash:        .[2],
+            author:      { name: .[3], email: .[4] },
+            author_date: .[5],
+            commit_date: .[6],
+            timestamp:   (.[0] | tonumber),
+            subject:     .[7],
+            body:        (.[8] // "")
+          })
+    '
+}
 
 #===============================================================================
 # Argument Parsing
@@ -215,7 +300,14 @@ while [[ $# -gt 0 ]]; do
             case $1 in
                 --mroot)
                     if [[ -n "${2:-}" ]]; then
-                        root_dirs+=("$(eval echo "$2")")
+                        # Expand a leading ~ without eval (avoids command injection)
+                        mroot="$2"
+                        # shellcheck disable=SC2088  # these are case patterns, not tilde expansion
+                        case "$mroot" in
+                            "~")    mroot="$HOME" ;;
+                            "~/"*)  mroot="$HOME/${mroot#\~/}" ;;
+                        esac
+                        root_dirs+=("$mroot")
                         shift 2
                     else
                         echo "Error: --mroot requires a directory argument" >&2
@@ -261,6 +353,14 @@ while [[ $# -gt 0 ]]; do
                         exit 1
                     fi
                     ;;
+                --minterleave)
+                    interleave_mode=true
+                    shift
+                    ;;
+                --mjson)
+                    json_mode=true
+                    shift
+                    ;;
                 *)
                     echo "Error: Unknown mgitlog option: $1" >&2
                     show_help >&2
@@ -285,11 +385,11 @@ done
 
 # Convert all paths to absolute paths
 for i in "${!root_dirs[@]}"; do
-    if pushd "${root_dirs[$i]}" >/dev/null 2>/dev/null; then
-        root_dirs[$i]="$(pwd)"
+    if pushd "${root_dirs[i]}" >/dev/null 2>/dev/null; then
+        root_dirs[i]="$(pwd)"
         popd >/dev/null
     else
-        echo "Error: Cannot access directory: ${root_dirs[$i]}" >&2
+        echo "Error: Cannot access directory: ${root_dirs[i]}" >&2
         exit 1
     fi
 done
@@ -297,10 +397,34 @@ done
 # Convert git_args array to string
 [[ ${#git_args[@]} -gt 0 ]] && printf -v git_args_string '%q ' "${git_args[@]}"
 
+# --mjson implies the interleaved collection path; validate jq is available.
+if [[ "$json_mode" == true ]]; then
+    interleave_mode=true
+    if ! command -v jq >/dev/null 2>&1; then
+        echo "Error: --mjson requires 'jq' to be installed" >&2
+        exit 1
+    fi
+fi
+
+# Interleaved / JSON path: collect commits from every repo into one
+# time-sorted stream, then render. This bypasses per-repo headers and hooks.
+if [[ "$interleave_mode" == true ]]; then
+    if [[ "$json_mode" == true ]]; then
+        collect_all_records | render_json
+    else
+        collect_all_records | render_interleaved_text
+    fi
+    exit 0
+fi
+
 # Process repositories in parallel or sequentially
 for root_dir in "${root_dirs[@]}"; do
     if [ "$parallel_processes" -gt 0 ]; then
-        find_git_repos "$root_dir" | xargs -P "$parallel_processes" -I {} bash -c "process_repository {} '$show_header' '$git_args_string'" || true
+        # Pass values as positional args ($1..$3), never interpolated into the
+        # command string, so paths/args with spaces or shell metacharacters are safe.
+        # shellcheck disable=SC2016  # single quotes are intentional: values come via positional args
+        find_git_repos "$root_dir" | xargs -P "$parallel_processes" -I {} \
+            bash -c 'process_repository "$1" "$2" "$3"' _ {} "$show_header" "$git_args_string" || true
     else
         while IFS= read -r repo; do
             process_repository "$repo" "$show_header" "$git_args_string"

@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  lint:
+    name: ShellCheck
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - name: Lint
+        run: shellcheck mgitlog.sh
+
+  test:
+    name: Bats
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install bats, jq and fd
+        # jq powers --mjson; fd-find exercises the fast discovery path
+        # (the suite also covers the find fallback explicitly).
+        run: sudo apt-get update && sudo apt-get install -y bats jq fd-find
+      - name: Run tests
+        run: bats test/

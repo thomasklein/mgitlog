@@ -1,6 +1,6 @@
 # mgitlog (Multi git log)
 
-[![Version](https://img.shields.io/badge/version-1.0.0-blue.svg)](https://github.com/thomasklein/mgitlog/releases)
+[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/thomasklein/mgitlog/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Run `git log` across multiple repositories.
@@ -12,8 +12,9 @@ Run `git log` across multiple repositories.
 - [Overview](#overview)
 - [Example Usage](#example-usage)
 - [Installation](#installation)
-- [Options & Environment Variables](#options--environment-variables)
+- [Options](#options)
 - [Tips & Tricks](#tips--tricks)
+- [Interleaved Cross-Repo View](#interleaved-cross-repo-view)
 - [JSON Output & `jq` Integration](#json-output--jq-integration)
 
 ## Overview
@@ -73,9 +74,7 @@ chmod +x mgitlog.sh
 sudo ln -s "$(pwd)/mgitlog.sh" /usr/local/bin/mgitlog
 ```
 
-## Options & Environment Variables
-
-Options:
+## Options
 
 ```bash
   --mroot DIR               Specify root directory. Defaults to current directory 
@@ -86,22 +85,16 @@ Options:
                               Supports partial matches (e.g., 'test' excludes 'test-repo')
   --mparallelize [NUMBER]   Enable parallel processing with optional number of processes (default: 4)
   --mscandepth NUMBER       Maximum depth when scanning for repositories (default: 2)
+  --minterleave             Merge commits from all repositories into a single stream,
+                              sorted newest-first by commit date across repos
+  --mjson                   Emit a JSON array of commit objects (requires 'jq')
   --help                    Show this help message
   --version                 Show version information
 ```
 
-Environment variables:
-
-```bash
-  MGITLOG_BEFORE_CMD        A command (or series of commands) to run *before* 'git log' in each repository.
-                              For example:
-                              MGITLOG_BEFORE_CMD="git pull --rebase" mgitlog
-
-  MGITLOG_AFTER_CMD         A command (or series of commands) to run *after* 'git log' output is printed for each repository.
-                              The result of the git log command is piped into the command.
-                              For example:
-                              MGITLOG_AFTER_CMD="echo 'Done with repo!'" mgitlog
-```
+> **Tip:** if [`fd`](https://github.com/sharkdp/fd) is installed it is used for
+> repository discovery (faster on large trees); otherwise `mgitlog` falls back to
+> `find`. No configuration needed.
 
 All other arguments are passed directly to git log. For example:
 
@@ -113,27 +106,14 @@ All other arguments are passed directly to git log. For example:
 
 ## Tips & Tricks
 
-1. **Per-Repo Hooks: Pre/Post Execution Steps Using `MGITLOG_BEFORE_CMD` and `MGITLOG_AFTER_CMD`**
+1. **A timeline of what you did everywhere this week**
 
-    Set `MGITLOG_BEFORE_CMD` to ensure your repos are up to date before logging:
-
-    ```bash
-    MGITLOG_BEFORE_CMD="git checkout main && git pull" \
-    mgitlog --since="1 month ago"
-    ```
-
-    Use `MGITLOG_AFTER_CMD` to log which repos were processed:
+    `--minterleave` is the quickest way to see your cross-project activity in
+    chronological order:
 
     ```bash
-    MGITLOG_AFTER_CMD="echo \"Processed \$(basename \$(pwd)) at \$(date)\" >> ~/repo_processing.log" \
-    mgitlog --since="1 month ago"
-    ```
-
-    Use `MGITLOG_AFTER_CMD` to write the output to a file named after the current repository:
-
-    ```bash
-    MGITLOG_AFTER_CMD="tee \$(basename \$PWD).log" \
-    mgitlog --since="1 month ago"
+    mgitlog --mroot ~/projects --minterleave \
+      --author="$(git config user.email)" --since="1 week ago"
     ```
 
 2. **Common Queries: Environment Variables or Aliases**
@@ -173,22 +153,68 @@ All other arguments are passed directly to git log. For example:
         | sort -nr
     ```
 
-## JSON Output & `jq` Integration
+## Interleaved Cross-Repo View
 
-Use `--pretty` formatting from `git log` to produce JSON-like output and pipe it into `jq` for complex filtering:
+`--minterleave` merges commits from every discovered repository into a single
+stream, sorted newest-first by commit date — so you see what happened across all
+your projects in chronological order, with each commit tagged by repo:
 
 ```bash
-mgitlog --mroot ~/projects \
-  --pretty=format:'{"commit":"%H","author":"%an <%ae>","date":"%ad","message":"%f"}' \
-  | jq
+$ mgitlog --mroot ~/projects --minterleave --since="1 week ago"
+
+commit a1b2c3...  [API-GATEWAY]
+Author: Jane Smith <jane.smith@example.com>
+Date:   2026-06-12T16:10:53+02:00
+
+    feat: add rate limiting middleware
+
+commit d4e5f6...  [FRONTEND-SERVICE]
+Author: Jane Smith <jane.smith@example.com>
+Date:   2026-06-11T09:45:12+02:00
+
+    fix: correct login form validation
 ```
 
-Example for filtering by author using `jq`:
+## JSON Output & `jq` Integration
+
+`--mjson` emits a JSON array of commit objects, globally sorted newest-first.
+Unlike a hand-rolled `--pretty` format string, this escapes commit text correctly
+(quotes, backslashes, and newlines in messages are preserved), so it's safe to
+pipe straight into `jq`. Requires [`jq`](https://jqlang.github.io/jq/).
+
+Each object has the shape:
+
+```json
+{
+  "repo": "/home/jane/projects/api-gateway",
+  "hash": "a1b2c3...",
+  "author": { "name": "Jane Smith", "email": "jane.smith@example.com" },
+  "author_date": "2026-06-12T16:10:53+02:00",
+  "commit_date": "2026-06-12T16:10:53+02:00",
+  "timestamp": 1749737453,
+  "subject": "feat: add rate limiting middleware",
+  "body": ""
+}
+```
+
+Examples:
+
+```bash
+# Commits by a given author, newest first
+mgitlog --mroot ~/projects --mjson --since="1 month ago" \
+  | jq '.[] | select(.author.email == "jane.smith@example.com") | .subject'
+
+# Count commits per repo
+mgitlog --mroot ~/projects --mjson \
+  | jq -r '.[].repo' | sort | uniq -c | sort -nr
+```
+
+You can still build JSON manually with `git log`'s `--pretty` if you prefer (note
+this does not escape special characters in commit messages):
 
 ```bash
 mgitlog --mroot ~/projects \
-  --pretty=format:'{"commit":"%H","author":"%an","email":"%ae","date":"%ad","message":"%s"}' \
-  | jq 'select(.author == "Jane Smith")'
+  --pretty=format:'{"commit":"%H","author":"%an","date":"%ad","message":"%s"}'
 ```
 
 [Contributing](CONTRIBUTING.md) | [Changelog](CHANGELOG.md) | [MIT](LICENSE)
