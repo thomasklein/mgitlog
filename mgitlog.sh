@@ -14,7 +14,7 @@ set -euo pipefail
 # Configuration and Global Variables
 #===============================================================================
 TOOL_NAME="mgitlog"
-VERSION="1.2.0"
+VERSION="1.3.0"
 
 # Arrays to store multiple root directories and git arguments
 declare -a root_dirs        # Stores paths to search for repositories
@@ -26,7 +26,7 @@ show_header="none"         # Header display mode: none, auto, always
 git_args_string=""         # Concatenated git arguments as a single string
 parallel_processes=0       # Number of parallel processes (0 = sequential)
 max_depth=2               # Maximum directory depth for repository scanning
-interleave_mode=false      # Interleave commits from all repos into one time-sorted stream
+timeline_mode=false      # Combine all repos commits into one time-sorted timeline
 json_mode=false            # Emit a JSON array of commit objects instead of text
 summary_mode=false         # Print a one-line-per-repo activity overview
 stale_mode=false           # List repositories untouched for longer than a threshold
@@ -58,40 +58,42 @@ show_help() {
     cat << EOF
 Usage: $TOOL_NAME [mgitlog options] [git log arguments]
 
-Run 'git log' across multiple repositories. All mgitlog options (--m*) must come
-BEFORE any git log arguments; everything else is passed straight through to git log.
+Run 'git log' in many repositories at once. Put all mgitlog options (--m*) FIRST,
+before any git log arguments. Anything that is not an --m* option is passed on to
+git log unchanged.
 
-By default each repository's log is printed in turn. --minterleave, --mjson,
---msummary and --mstale are alternative output modes (use one at a time).
+By default, each repository's log is printed one after another. --mtimeline,
+--mjson, --msummary and --mstale change the output. Use only one of them at a time.
 
 Options:
-  --mroot DIR               Specify root directory. Defaults to current directory 
-                              and checks direct subdirectories (can be used multiple times)
-  --mheader [style]         Show repository headers. Optional style: 'auto' (default), 'always'
-                              'auto' only shows headers when there are commits to display
-  --mexclude PATTERN        Exclude repository path(s) from scanning (can be used multiple times)
-                              Supports partial matches (e.g., 'test' excludes 'test-repo')
-  --mparallelize [NUMBER]   Enable parallel processing with optional number of processes (default: 4)
-  --mscandepth NUMBER       Maximum depth when scanning for repositories (default: 2)
-  --minterleave             Interleave commits from all repositories into one
-                              chronological list, newest-first by commit date
-  --mjson                   Emit a JSON array of commit objects (implies --minterleave
-                              ordering; requires 'jq'). Ideal for piping into jq.
-  --msummary                One line per repository: commit count, last activity,
-                              and authors. Honors git log filters (e.g. --since).
-  --mstale DURATION         List repositories whose last commit is older than
-                              DURATION (e.g. 30d, 2w, 6m, 1y; bare number = days).
-  --help                    Show this help message
-  --version                 Show version information
+  --mroot DIR               Folder to look in. Defaults to the current folder and
+                              its direct subfolders. Can be given more than once.
+  --mheader [style]         Print a title before each repository's log.
+                              Style: 'auto' (default) shows it only when there are
+                              commits; 'always' shows it for every repository.
+  --mexclude PATTERN        Skip repositories whose path contains PATTERN.
+                              Can be given more than once (e.g. 'test' skips 'test-repo').
+  --mparallelize [NUMBER]   Process repositories in parallel (default: 4 at a time).
+  --mscandepth NUMBER       How many folder levels deep to look for repos (default: 2).
+  --mtimeline               Combine commits from all repositories into one list,
+                              ordered by date with the newest first.
+  --mjson                   Print commits as a JSON array (same order as --mtimeline).
+                              Needs 'jq'. Good for scripts and piping into jq.
+  --msummary                Print one line per repository: number of commits, when
+                              it was last active, and who. Your git log filters apply.
+  --mstale DURATION         Show only repositories with no commit for longer than
+                              DURATION (e.g. 30d, 2w, 6m, 1y; a plain number = days).
+  --help                    Show this help message.
+  --version                 Show the version number.
 
 Examples:
-  # Per-repo logs from every repo under ~/projects, with headers
+  # Show each repository's log under ~/projects, with a title per repo
   $TOOL_NAME --mroot ~/projects --mheader
 
-  # One unified timeline of your commits across all repos this week
-  $TOOL_NAME --mroot ~/projects --minterleave --author="you@example.com" --since="1 week ago"
+  # One combined timeline of your commits across all repos this week
+  $TOOL_NAME --mroot ~/projects --mtimeline --author="you@example.com" --since="1 week ago"
 
-  # Activity overview: commits, last activity and authors per repo
+  # Overview: commits, last activity and authors, one line per repo
   $TOOL_NAME --mroot ~/projects --msummary --since="1 month ago"
 
   # Repositories with no commit in the last 30 days
@@ -221,7 +223,7 @@ export -f process_repository
 export -f is_excluded
 
 #===============================================================================
-# Interleaved / JSON Output
+# Timeline / JSON Output
 #===============================================================================
 
 # Machine-readable git log format. Fields are US-separated; commits are
@@ -264,7 +266,7 @@ collect_all_records() {
 }
 
 # Render the collected stream as a unified, git-log-like text view.
-render_interleaved_text() {
+render_timeline() {
     local rec
     local ct repo hash an ae aI cI subject body repo_name
     while IFS= read -r -d '' rec || [[ -n "$rec" ]]; do
@@ -505,8 +507,8 @@ while [[ $# -gt 0 ]]; do
                         exit 1
                     fi
                     ;;
-                --minterleave)
-                    interleave_mode=true
+                --mtimeline)
+                    timeline_mode=true
                     shift
                     ;;
                 --mjson)
@@ -564,9 +566,9 @@ done
 # Convert git_args array to string
 [[ ${#git_args[@]} -gt 0 ]] && printf -v git_args_string '%q ' "${git_args[@]}"
 
-# --mjson implies the interleaved collection path; validate jq is available.
+# --mjson reuses the timeline collection path; validate jq is available.
 if [[ "$json_mode" == true ]]; then
-    interleave_mode=true
+    timeline_mode=true
     if ! command -v jq >/dev/null 2>&1; then
         echo "Error: --mjson requires 'jq' to be installed" >&2
         exit 1
@@ -598,13 +600,13 @@ if [[ "$stale_mode" == true ]]; then
     exit 0
 fi
 
-# Interleaved / JSON path: collect commits from every repo into one
+# Timeline / JSON path: collect commits from every repo into one
 # time-sorted stream, then render. This bypasses per-repo headers and hooks.
-if [[ "$interleave_mode" == true ]]; then
+if [[ "$timeline_mode" == true ]]; then
     if [[ "$json_mode" == true ]]; then
         collect_all_records | render_json
     else
-        collect_all_records | render_interleaved_text
+        collect_all_records | render_timeline
     fi
     exit 0
 fi

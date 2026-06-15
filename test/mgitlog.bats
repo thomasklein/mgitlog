@@ -135,12 +135,12 @@ make_repo() {
     [[ "$output" == *"Usage:"* ]]
 }
 
-@test "--minterleave sorts commits newest-first across repos" {
+@test "--mtimeline sorts commits newest-first across repos" {
     make_repo "$WORK/old"    "feat: oldest"  "2026-01-01T10:00:00"
     make_repo "$WORK/mid"    "feat: middle"  "2026-03-01T10:00:00"
     make_repo "$WORK/new"    "feat: newest"  "2026-06-01T10:00:00"
 
-    run "$MGITLOG" --mroot "$WORK" --minterleave
+    run "$MGITLOG" --mroot "$WORK" --mtimeline
     [ "$status" -eq 0 ]
     # Newest must appear before middle, which appears before oldest.
     newest_pos=$(awk '/feat: newest/{print NR; exit}' <<< "$output")
@@ -150,11 +150,11 @@ make_repo() {
     [ "$middle_pos" -lt "$oldest_pos" ]
 }
 
-@test "--minterleave tags each commit with its repo name" {
+@test "--mtimeline tags each commit with its repo name" {
     make_repo "$WORK/alpha" "feat: a" "2026-01-01T10:00:00"
     make_repo "$WORK/beta"  "feat: b" "2026-02-01T10:00:00"
 
-    run "$MGITLOG" --mroot "$WORK" --minterleave
+    run "$MGITLOG" --mroot "$WORK" --mtimeline
     [ "$status" -eq 0 ]
     [[ "$output" == *"[ALPHA]"* ]]
     [[ "$output" == *"[BETA]"* ]]

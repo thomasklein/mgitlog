@@ -1,9 +1,9 @@
 # mgitlog (Multi git log)
 
-[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/thomasklein/mgitlog/releases)
+[![Version](https://img.shields.io/badge/version-1.3.0-blue.svg)](https://github.com/thomasklein/mgitlog/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
-Run `git log` across multiple repositories.
+Run `git log` in many repositories at once.
 
 > **Note**: Compatible with Unix-like systems (Linux, macOS). Windows is supported over WSL.
 
@@ -15,20 +15,20 @@ Run `git log` across multiple repositories.
 - [Options](#options)
 - [Tips & Tricks](#tips--tricks)
 - [Activity Overview & Stale Repos](#activity-overview--stale-repos)
-- [Interleaved Cross-Repo View](#interleaved-cross-repo-view)
+- [Combined Timeline Across Repos](#combined-timeline-across-repos)
 - [JSON Output & `jq` Integration](#json-output--jq-integration)
+- [Recipes](#recipes)
 
 ## Overview
 
-`mgitlog` is a wrapper around `git log`, allowing you to run it over multiple repositories at once.
-You can specify one or more "root" directories, and `mgitlog` will find and list logs from all discovered
-Git repositories. This tool is especially helpful for engineers who work across many projects.
+`mgitlog` runs `git log` in many repositories at once. You give it one or more
+folders to look in, and it finds every Git repository inside and shows their
+logs. It is handy if you work across many projects.
 
-You can pipe its output into standard Unix tools like `grep`, `awk`, `sed`,
-or use interactive tools like `fzf` to quickly locate, filter,
-and analyze commit data (examples below).
-You can also leverage all the usual `git log` arguments to narrow results by author, date range,
-commit message patterns, and more.
+You can pipe the output into normal Unix tools like `grep`, `awk`, and `sed`, or
+into interactive ones like `fzf`, to find and filter commits (examples below).
+All the usual `git log` arguments still work, so you can narrow results by author,
+date range, commit message, and more.
 
 ## Example Usage
 
@@ -78,22 +78,25 @@ sudo ln -s "$(pwd)/mgitlog.sh" /usr/local/bin/mgitlog
 ## Options
 
 ```bash
-  --mroot DIR               Specify root directory. Defaults to current directory 
-                              and checks direct subdirectories (can be used multiple times)
-  --mheader [style]         Show repository headers. Optional style: 'auto' (default), 'always'
-                              'auto' only shows headers when there are commits to display
-  --mexclude PATTERN        Exclude repository path(s) from scanning (can be used multiple times)
-                              Supports partial matches (e.g., 'test' excludes 'test-repo')
-  --mparallelize [NUMBER]   Enable parallel processing with optional number of processes (default: 4)
-  --mscandepth NUMBER       Maximum depth when scanning for repositories (default: 2)
-  --minterleave             Interleave commits from all repositories into one
-                              chronological list, newest-first by commit date
-  --mjson                   Emit a JSON array of commit objects (requires 'jq')
-  --msummary                One line per repository: commit count, last activity, authors
-  --mstale DURATION         List repositories whose last commit is older than DURATION
-                              (e.g. 30d, 2w, 6m, 1y; a bare number means days)
-  --help                    Show this help message
-  --version                 Show version information
+  --mroot DIR               Folder to look in. Defaults to the current folder and
+                              its direct subfolders. Can be given more than once.
+  --mheader [style]         Print a title before each repository's log. Style:
+                              'auto' (default) shows it only when there are commits;
+                              'always' shows it for every repository.
+  --mexclude PATTERN        Skip repositories whose path contains PATTERN. Can be
+                              given more than once (e.g. 'test' skips 'test-repo').
+  --mparallelize [NUMBER]   Process repositories in parallel (default: 4 at a time).
+  --mscandepth NUMBER       How many folder levels deep to look for repos (default: 2).
+  --mtimeline               Combine commits from all repositories into one list,
+                              ordered by date with the newest first.
+  --mjson                   Print commits as a JSON array (same order as --mtimeline).
+                              Needs 'jq'.
+  --msummary                One line per repository: number of commits, when it was
+                              last active, and who.
+  --mstale DURATION         Show only repositories with no commit for longer than
+                              DURATION (e.g. 30d, 2w, 6m, 1y; a plain number = days).
+  --help                    Show this help message.
+  --version                 Show the version number.
 ```
 
 > **Tip:** if [`fd`](https://github.com/sharkdp/fd) is installed it is used for
@@ -109,18 +112,18 @@ everything after is passed directly to git log. For example:
 - `--before="2024-01-01"`
 - Specify branches or other git log arguments as needed
 
-> `--minterleave`, `--mjson`, `--msummary` and `--mstale` are alternative output
-> modes — use one at a time. Without any of them, each repo's log prints in turn.
+> `--mtimeline`, `--mjson`, `--msummary` and `--mstale` change the output — use
+> one at a time. Without any of them, each repo's log prints one after another.
 
 ## Tips & Tricks
 
 1. **A timeline of what you did everywhere this week**
 
-    `--minterleave` is the quickest way to see your cross-project activity in
-    chronological order:
+    `--mtimeline` is the quickest way to see your activity across all projects,
+    ordered by date:
 
     ```bash
-    mgitlog --mroot ~/projects --minterleave \
+    mgitlog --mroot ~/projects --mtimeline \
       --author="$(git config user.email)" --since="1 week ago"
     ```
 
@@ -167,9 +170,9 @@ When you work across many repositories, the first questions are usually "where
 have I been active?" and "what's gone quiet?" — not the full commit log. These
 two modes answer that without relying on any commit-message conventions.
 
-`--msummary` collapses each repo to a single line — commit count, last activity,
-and authors — sorted most-recently-active first. It honors git log filters, so
-you can scope it to a window or an author:
+`--msummary` shows each repo as a single line — commit count, last activity, and
+authors — with the most recently active repo first. Your git log filters still
+apply, so you can limit it to a time window or an author:
 
 ```bash
 $ mgitlog --mroot ~/work --since="1 month ago" --msummary
@@ -193,14 +196,14 @@ payments  no commits   -
 checkout  6 weeks ago  2026-05-02
 ```
 
-## Interleaved Cross-Repo View
+## Combined Timeline Across Repos
 
-`--minterleave` interleaves commits from every discovered repository into one
-chronological list, newest-first by commit date — so you see what happened across
-all your projects in order, with each commit tagged by repo:
+`--mtimeline` combines the commits from every repository into one list, ordered
+by date with the newest first — so you see what happened across all your projects
+in order, with each commit labelled by repo:
 
 ```bash
-$ mgitlog --mroot ~/projects --minterleave --since="1 week ago"
+$ mgitlog --mroot ~/projects --mtimeline --since="1 week ago"
 
 commit a1b2c3...  [API-GATEWAY]
 Author: Jane Smith <jane.smith@example.com>
@@ -255,6 +258,53 @@ this does not escape special characters in commit messages):
 ```bash
 mgitlog --mroot ~/projects \
   --pretty=format:'{"commit":"%H","author":"%an","date":"%ad","message":"%s"}'
+```
+
+## Recipes
+
+A few things that are hard with plain `git` but easy here. The idea behind most
+of them: `--mjson` turns every commit in every repo into one stream, and `jq`
+shapes it however you like.
+
+**Your week across every project — a one-line standup.** No single `git` command
+can answer "what did I do everywhere, in order":
+
+```bash
+mgitlog --mroot ~/projects --mtimeline \
+  --author="$(git config user.email)" --since="1 week ago"
+```
+
+**A daily activity graph** (commits per day, as bars):
+
+```bash
+mgitlog --mroot ~/projects --mjson --since="1 month ago" \
+  | jq -r '.[].commit_date[0:10]' | sort | uniq -c \
+  | awk '{bar=""; for(i=0;i<$1;i++) bar=bar"█"; print $2, bar, $1}'
+```
+
+**Who shipped what this week** (team activity, busiest first):
+
+```bash
+mgitlog --mroot ~/work --mjson --since="1 week ago" \
+  | jq -r '.[].author.name' | sort | uniq -c | sort -rn
+```
+
+**Track a ticket across all services at once**, in time order:
+
+```bash
+mgitlog --mroot ~/work --mtimeline --grep="JIRA-1234"
+```
+
+**Jump to any commit across every repo**, interactively:
+
+```bash
+mgitlog --mroot ~/work --mtimeline | fzf
+```
+
+**Spot forgotten repos** — anything with no commit in two months:
+
+```bash
+mgitlog --mroot ~/work --mstale 2m
 ```
 
 [Contributing](CONTRIBUTING.md) | [Changelog](CHANGELOG.md) | [MIT](LICENSE)

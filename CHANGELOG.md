@@ -5,6 +5,21 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.3.0 - 2026-06-16
+
+### Added
+
+- "Recipes" section in the README: one-line standup, daily activity graph,
+  team-activity counts, cross-repo ticket tracking, fzf browsing, stale repos.
+
+### Changed
+
+- **Breaking:** renamed `--minterleave` to `--mtimeline`. The behaviour is
+  unchanged; "interleave" was unclear, especially for non-native English
+  speakers, and read like a `git merge`.
+- Reworded `--help` and the README in plainer language (shorter sentences,
+  common words) to make usage easier to read at a glance.
+
 ## 1.2.0 - 2026-06-15
 
 ### Added
