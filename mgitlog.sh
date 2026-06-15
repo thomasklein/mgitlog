@@ -56,7 +56,13 @@ export git_args
 # Display usage information and available options
 show_help() {
     cat << EOF
-Usage: $TOOL_NAME [options] [git log arguments] # Run 'git log' across multiple repositories
+Usage: $TOOL_NAME [mgitlog options] [git log arguments]
+
+Run 'git log' across multiple repositories. All mgitlog options (--m*) must come
+BEFORE any git log arguments; everything else is passed straight through to git log.
+
+By default each repository's log is printed in turn. --minterleave, --mjson,
+--msummary and --mstale are alternative output modes (use one at a time).
 
 Options:
   --mroot DIR               Specify root directory. Defaults to current directory 
@@ -78,7 +84,21 @@ Options:
   --help                    Show this help message
   --version                 Show version information
 
-All other arguments are passed straight through to 'git log'.
+Examples:
+  # Per-repo logs from every repo under ~/projects, with headers
+  $TOOL_NAME --mroot ~/projects --mheader
+
+  # One unified timeline of your commits across all repos this week
+  $TOOL_NAME --mroot ~/projects --minterleave --author="you@example.com" --since="1 week ago"
+
+  # Activity overview: commits, last activity and authors per repo
+  $TOOL_NAME --mroot ~/projects --msummary --since="1 month ago"
+
+  # Repositories with no commit in the last 30 days
+  $TOOL_NAME --mroot ~/projects --mstale 30d
+
+  # Machine-readable JSON for scripting (requires jq)
+  $TOOL_NAME --mroot ~/projects --mjson | jq '.[].subject'
 EOF
 }
 

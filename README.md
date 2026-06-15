@@ -100,13 +100,17 @@ sudo ln -s "$(pwd)/mgitlog.sh" /usr/local/bin/mgitlog
 > repository discovery (faster on large trees); otherwise `mgitlog` falls back to
 > `find`. No configuration needed.
 
-All other arguments are passed directly to git log. For example:
+All mgitlog options (`--m*`) must come **before** any git log arguments;
+everything after is passed directly to git log. For example:
 
 - `--author="Jane Doe"`
 - `--since="2 weeks ago"`
 - `--grep="JIRA-123"`
 - `--before="2024-01-01"`
 - Specify branches or other git log arguments as needed
+
+> `--minterleave`, `--mjson`, `--msummary` and `--mstale` are alternative output
+> modes — use one at a time. Without any of them, each repo's log prints in turn.
 
 ## Tips & Tricks
 
