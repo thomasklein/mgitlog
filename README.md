@@ -86,8 +86,8 @@ sudo ln -s "$(pwd)/mgitlog.sh" /usr/local/bin/mgitlog
                               Supports partial matches (e.g., 'test' excludes 'test-repo')
   --mparallelize [NUMBER]   Enable parallel processing with optional number of processes (default: 4)
   --mscandepth NUMBER       Maximum depth when scanning for repositories (default: 2)
-  --minterleave             Merge commits from all repositories into a single stream,
-                              sorted newest-first by commit date across repos
+  --minterleave             Interleave commits from all repositories into one
+                              chronological list, newest-first by commit date
   --mjson                   Emit a JSON array of commit objects (requires 'jq')
   --msummary                One line per repository: commit count, last activity, authors
   --mstale DURATION         List repositories whose last commit is older than DURATION
@@ -195,9 +195,9 @@ checkout  6 weeks ago  2026-05-02
 
 ## Interleaved Cross-Repo View
 
-`--minterleave` merges commits from every discovered repository into a single
-stream, sorted newest-first by commit date — so you see what happened across all
-your projects in chronological order, with each commit tagged by repo:
+`--minterleave` interleaves commits from every discovered repository into one
+chronological list, newest-first by commit date — so you see what happened across
+all your projects in order, with each commit tagged by repo:
 
 ```bash
 $ mgitlog --mroot ~/projects --minterleave --since="1 week ago"

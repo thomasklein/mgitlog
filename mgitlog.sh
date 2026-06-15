@@ -26,7 +26,7 @@ show_header="none"         # Header display mode: none, auto, always
 git_args_string=""         # Concatenated git arguments as a single string
 parallel_processes=0       # Number of parallel processes (0 = sequential)
 max_depth=2               # Maximum directory depth for repository scanning
-interleave_mode=false      # Merge commits from all repos into one time-sorted stream
+interleave_mode=false      # Interleave commits from all repos into one time-sorted stream
 json_mode=false            # Emit a JSON array of commit objects instead of text
 summary_mode=false         # Print a one-line-per-repo activity overview
 stale_mode=false           # List repositories untouched for longer than a threshold
@@ -73,8 +73,8 @@ Options:
                               Supports partial matches (e.g., 'test' excludes 'test-repo')
   --mparallelize [NUMBER]   Enable parallel processing with optional number of processes (default: 4)
   --mscandepth NUMBER       Maximum depth when scanning for repositories (default: 2)
-  --minterleave             Merge commits from all repositories into a single stream,
-                              sorted newest-first by commit date across repos
+  --minterleave             Interleave commits from all repositories into one
+                              chronological list, newest-first by commit date
   --mjson                   Emit a JSON array of commit objects (implies --minterleave
                               ordering; requires 'jq'). Ideal for piping into jq.
   --msummary                One line per repository: commit count, last activity,
