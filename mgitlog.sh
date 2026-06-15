@@ -14,7 +14,7 @@ set -euo pipefail
 # Configuration and Global Variables
 #===============================================================================
 TOOL_NAME="mgitlog"
-VERSION="1.1.0"
+VERSION="1.2.0"
 
 # Arrays to store multiple root directories and git arguments
 declare -a root_dirs        # Stores paths to search for repositories
@@ -28,6 +28,9 @@ parallel_processes=0       # Number of parallel processes (0 = sequential)
 max_depth=2               # Maximum directory depth for repository scanning
 interleave_mode=false      # Merge commits from all repos into one time-sorted stream
 json_mode=false            # Emit a JSON array of commit objects instead of text
+summary_mode=false         # Print a one-line-per-repo activity overview
+stale_mode=false           # List repositories untouched for longer than a threshold
+stale_threshold=""         # Duration string for --mstale (e.g. 30d, 2w, 6m)
 
 # Control characters used to frame machine-readable git output.
 # US (unit separator) between fields, NUL between records (via `git log -z`).
@@ -68,6 +71,10 @@ Options:
                               sorted newest-first by commit date across repos
   --mjson                   Emit a JSON array of commit objects (implies --minterleave
                               ordering; requires 'jq'). Ideal for piping into jq.
+  --msummary                One line per repository: commit count, last activity,
+                              and authors. Honors git log filters (e.g. --since).
+  --mstale DURATION         List repositories whose last commit is older than
+                              DURATION (e.g. 30d, 2w, 6m, 1y; bare number = days).
   --help                    Show this help message
   --version                 Show version information
 
@@ -275,6 +282,131 @@ render_json() {
 }
 
 #===============================================================================
+# Activity Summary & Stale Detection
+#===============================================================================
+
+# Parse a duration like 30d, 2w, 6m, 1y (a bare number means days) into seconds.
+# Prints the number of seconds on success; returns 1 on invalid input.
+parse_duration() {
+    local spec="$1" num unit
+    [[ "$spec" =~ ^([0-9]+)([dwmy]?)$ ]] || return 1
+    num="${BASH_REMATCH[1]}"
+    unit="${BASH_REMATCH[2]:-d}"
+    case "$unit" in
+        d) printf '%s\n' "$((num * 86400))" ;;
+        w) printf '%s\n' "$((num * 604800))" ;;
+        m) printf '%s\n' "$((num * 2592000))" ;;   # 30-day month
+        y) printf '%s\n' "$((num * 31536000))" ;;  # 365-day year
+        *) return 1 ;;
+    esac
+}
+
+# Emit one NUL-terminated, US-delimited summary record for a repo:
+#   <last_ct> US <repo_name> US <count> US <last_relative> US <authors>
+# Honors the user's git log arguments (e.g. --since, --author). At most three
+# distinct authors are shown, with "+N" for the rest. last_ct is the sort key.
+summarize_repo() {
+    local repo="$1" git_args_str="$2"
+    local count=0 last_ct=0 last_cr="" authors_seen="" distinct=0
+    local ct cr an
+    while IFS="$US" read -r ct cr an; do
+        count=$((count + 1))
+        if (( count == 1 )); then last_ct="$ct"; last_cr="$cr"; fi
+        # Dedupe authors with a comma-delimited membership test (no assoc arrays in bash 3.2)
+        case ",$authors_seen," in
+            *",$an,"*) ;;
+            *) authors_seen="${authors_seen:+$authors_seen,}$an"; distinct=$((distinct + 1)) ;;
+        esac
+    done < <(execute_in_dir "$repo" \
+        "git --no-pager log $git_args_str --pretty=tformat:'%ct%x1f%cr%x1f%an'" 2>/dev/null)
+
+    local repo_name authors
+    repo_name=$(basename "$repo")
+    if (( distinct == 0 )); then
+        authors="-"
+    else
+        authors="$authors_seen"
+        (( distinct > 3 )) && authors="$(printf '%s' "$authors_seen" | cut -d, -f1-3) +$((distinct - 3))"
+        authors="${authors//,/, }"   # comma-only internally (for dedupe); space out for display
+    fi
+    (( count == 0 )) && last_cr="-"
+    printf '%s%s%s%s%s%s%s%s%s\0' \
+        "$last_ct" "$US" "$repo_name" "$US" "$count" "$US" "$last_cr" "$US" "$authors"
+}
+
+# Render collected summary records as an aligned table (no external deps so it
+# works the same on macOS and Linux). Two passes: measure widths, then print.
+render_summary() {
+    local -a r_name r_count r_last r_auth
+    local rec name count last auth
+    local w_name=4 w_count=7 w_last=13   # widths of headers REPO / COMMITS / LAST ACTIVITY
+    while IFS= read -r -d '' rec || [[ -n "$rec" ]]; do
+        [[ -z "$rec" ]] && continue
+        # shellcheck disable=SC2034  # first field is the sort key, consumed upstream
+        local last_ct
+        IFS="$US" read -r last_ct name count last auth <<< "$rec"
+        r_name+=("$name"); r_count+=("$count"); r_last+=("$last"); r_auth+=("$auth")
+        (( ${#name} > w_name )) && w_name=${#name}
+        (( ${#count} > w_count )) && w_count=${#count}
+        (( ${#last} > w_last )) && w_last=${#last}
+    done
+    printf '%-*s  %*s  %-*s  %s\n' \
+        "$w_name" "REPO" "$w_count" "COMMITS" "$w_last" "LAST ACTIVITY" "AUTHORS"
+    local i
+    for i in "${!r_name[@]}"; do
+        printf '%-*s  %*s  %-*s  %s\n' \
+            "$w_name" "${r_name[$i]}" "$w_count" "${r_count[$i]}" \
+            "$w_last" "${r_last[$i]}" "${r_auth[$i]}"
+    done
+}
+
+# Emit a NUL-terminated record for a repo only if it is stale (last commit older
+# than the cutoff, or no commits at all):
+#   <last_ct> US <repo_name> US <last_relative> US <last_date>
+# Repos with no commits sort first (key 0).
+check_stale_repo() {
+    local repo="$1" git_args_str="$2" cutoff="$3"
+    local repo_name line ct cr cs
+    repo_name=$(basename "$repo")
+    line=$(execute_in_dir "$repo" \
+        "git --no-pager log -1 $git_args_str --pretty=format:'%ct%x1f%cr%x1f%cs'" 2>/dev/null) || line=""
+    if [[ -z "$line" ]]; then
+        printf '%s%s%s%s%s%s%s\0' "0" "$US" "$repo_name" "$US" "no commits" "$US" "-"
+        return
+    fi
+    IFS="$US" read -r ct cr cs <<< "$line"
+    if (( ct < cutoff )); then
+        printf '%s%s%s%s%s%s%s\0' "$ct" "$US" "$repo_name" "$US" "$cr" "$US" "$cs"
+    fi
+}
+
+# Render collected stale records as an aligned table.
+render_stale() {
+    local -a s_name s_last s_date
+    local rec name last date count=0
+    local w_name=4 w_last=11   # widths of headers REPO / LAST COMMIT
+    while IFS= read -r -d '' rec || [[ -n "$rec" ]]; do
+        [[ -z "$rec" ]] && continue
+        # shellcheck disable=SC2034  # first field is the sort key, consumed upstream
+        local ct
+        IFS="$US" read -r ct name last date <<< "$rec"
+        s_name+=("$name"); s_last+=("$last"); s_date+=("$date"); count=$((count + 1))
+        (( ${#name} > w_name )) && w_name=${#name}
+        (( ${#last} > w_last )) && w_last=${#last}
+    done
+    if (( count == 0 )); then
+        echo "No stale repositories."
+        return
+    fi
+    printf '%-*s  %-*s  %s\n' "$w_name" "REPO" "$w_last" "LAST COMMIT" "DATE"
+    local i
+    for i in "${!s_name[@]}"; do
+        printf '%-*s  %-*s  %s\n' \
+            "$w_name" "${s_name[$i]}" "$w_last" "${s_last[$i]}" "${s_date[$i]}"
+    done
+}
+
+#===============================================================================
 # Argument Parsing
 #===============================================================================
 
@@ -361,6 +493,21 @@ while [[ $# -gt 0 ]]; do
                     json_mode=true
                     shift
                     ;;
+                --msummary)
+                    summary_mode=true
+                    shift
+                    ;;
+                --mstale)
+                    if [[ -n "${2:-}" ]]; then
+                        stale_threshold="$2"
+                        stale_mode=true
+                        shift 2
+                    else
+                        echo "Error: --mstale requires a duration (e.g. 30d, 2w)" >&2
+                        show_help >&2
+                        exit 1
+                    fi
+                    ;;
                 *)
                     echo "Error: Unknown mgitlog option: $1" >&2
                     show_help >&2
@@ -404,6 +551,31 @@ if [[ "$json_mode" == true ]]; then
         echo "Error: --mjson requires 'jq' to be installed" >&2
         exit 1
     fi
+fi
+
+# Activity overview: one aggregated line per repo, most-recently-active first.
+if [[ "$summary_mode" == true ]]; then
+    for root_dir in "${root_dirs[@]}"; do
+        while IFS= read -r repo; do
+            summarize_repo "$repo" "$git_args_string"
+        done < <(find_git_repos "$root_dir")
+    done | sort -z -t "$US" -k1,1 -nr | render_summary
+    exit 0
+fi
+
+# Stale detection: list repos whose last commit is older than the threshold.
+if [[ "$stale_mode" == true ]]; then
+    stale_seconds=$(parse_duration "$stale_threshold") || {
+        echo "Error: invalid --mstale duration: '$stale_threshold' (try 30d, 2w, 6m, 1y)" >&2
+        exit 1
+    }
+    cutoff=$(( $(date +%s) - stale_seconds ))
+    for root_dir in "${root_dirs[@]}"; do
+        while IFS= read -r repo; do
+            check_stale_repo "$repo" "$git_args_string" "$cutoff"
+        done < <(find_git_repos "$root_dir")
+    done | sort -z -t "$US" -k1,1 -n | render_stale
+    exit 0
 fi
 
 # Interleaved / JSON path: collect commits from every repo into one

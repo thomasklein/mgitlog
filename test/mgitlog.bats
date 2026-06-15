@@ -202,6 +202,76 @@ make_repo() {
     [[ "$output" == *"feat: beta"* ]]
 }
 
+@test "--msummary reports commit counts and lists every repo" {
+    make_repo "$WORK/active" "first"
+    : > "$WORK/active/g"; git -C "$WORK/active" add -A; git -C "$WORK/active" commit -q -m "second"
+    make_repo "$WORK/single" "only"
+
+    run "$MGITLOG" --mroot "$WORK" --msummary
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"REPO"*"COMMITS"* ]]
+    [ "$(awk '$1=="active"{print $2}' <<< "$output")" -eq 2 ]
+    [ "$(awk '$1=="single"{print $2}' <<< "$output")" -eq 1 ]
+}
+
+@test "--msummary lists repos with zero matching commits too" {
+    make_repo "$WORK/has" "feat: x" "2001-01-01T00:00:00"
+
+    # A --since far in the future matches nothing, but the repo still appears.
+    run "$MGITLOG" --mroot "$WORK" --msummary --since="2099-01-01"
+    [ "$status" -eq 0 ]
+    [ "$(awk '$1=="has"{print $2}' <<< "$output")" -eq 0 ]
+}
+
+@test "--msummary sorts most-recently-active first" {
+    make_repo "$WORK/ancient" "old"    "2001-01-01T00:00:00"
+    make_repo "$WORK/recent"  "new"
+
+    run "$MGITLOG" --mroot "$WORK" --msummary
+    [ "$status" -eq 0 ]
+    recent_pos=$(awk '/^recent /{print NR; exit}' <<< "$output")
+    ancient_pos=$(awk '/^ancient /{print NR; exit}' <<< "$output")
+    [ "$recent_pos" -lt "$ancient_pos" ]
+}
+
+@test "--mstale flags old and empty repos but skips fresh ones" {
+    make_repo "$WORK/fresh"   "recent"
+    make_repo "$WORK/ancient" "old" "2001-01-01T00:00:00"
+    mkdir -p "$WORK/empty"
+    git -C "$WORK/empty" init -q   # initialized but no commits
+
+    run "$MGITLOG" --mroot "$WORK" --mstale 30d
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ancient"* ]]
+    [[ "$output" == *"empty"* ]]
+    [[ "$output" == *"no commits"* ]]
+    [[ "$output" != *"fresh"* ]]
+}
+
+@test "--mstale accepts week/month/year units" {
+    make_repo "$WORK/ancient" "old" "2001-01-01T00:00:00"
+
+    run "$MGITLOG" --mroot "$WORK" --mstale 2w
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"ancient"* ]]
+}
+
+@test "--mstale reports nothing when all repos are fresh" {
+    make_repo "$WORK/fresh" "recent"
+
+    run "$MGITLOG" --mroot "$WORK" --mstale 30d
+    [ "$status" -eq 0 ]
+    [[ "$output" == *"No stale repositories."* ]]
+}
+
+@test "--mstale rejects an invalid duration" {
+    make_repo "$WORK/alpha" "feat: a"
+
+    run "$MGITLOG" --mroot "$WORK" --mstale bogus
+    [ "$status" -ne 0 ]
+    [[ "$output" == *"invalid --mstale duration"* ]]
+}
+
 @test "--mjson errors clearly when jq is unavailable" {
     make_repo "$WORK/alpha" "feat: a"
 

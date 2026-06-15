@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## 1.2.0 - 2026-06-15
+
+### Added
+
+- `--msummary`: one aggregated line per repository (commit count, last activity,
+  authors), sorted most-recently-active first. Honors git log filters and needs
+  no commit-message conventions.
+- `--mstale DURATION`: list repositories whose last commit is older than a given
+  age (`30d`, `2w`, `6m`, `1y`, or a bare number of days); repos with no commits
+  are reported too. Useful for spotting abandoned services.
+
 ## 1.1.0 - 2026-06-15
 
 ### Added

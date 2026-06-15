@@ -1,6 +1,6 @@
 # mgitlog (Multi git log)
 
-[![Version](https://img.shields.io/badge/version-1.1.0-blue.svg)](https://github.com/thomasklein/mgitlog/releases)
+[![Version](https://img.shields.io/badge/version-1.2.0-blue.svg)](https://github.com/thomasklein/mgitlog/releases)
 [![License](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
 
 Run `git log` across multiple repositories.
@@ -14,6 +14,7 @@ Run `git log` across multiple repositories.
 - [Installation](#installation)
 - [Options](#options)
 - [Tips & Tricks](#tips--tricks)
+- [Activity Overview & Stale Repos](#activity-overview--stale-repos)
 - [Interleaved Cross-Repo View](#interleaved-cross-repo-view)
 - [JSON Output & `jq` Integration](#json-output--jq-integration)
 
@@ -88,6 +89,9 @@ sudo ln -s "$(pwd)/mgitlog.sh" /usr/local/bin/mgitlog
   --minterleave             Merge commits from all repositories into a single stream,
                               sorted newest-first by commit date across repos
   --mjson                   Emit a JSON array of commit objects (requires 'jq')
+  --msummary                One line per repository: commit count, last activity, authors
+  --mstale DURATION         List repositories whose last commit is older than DURATION
+                              (e.g. 30d, 2w, 6m, 1y; a bare number means days)
   --help                    Show this help message
   --version                 Show version information
 ```
@@ -152,6 +156,38 @@ All other arguments are passed directly to git log. For example:
         | uniq -c \
         | sort -nr
     ```
+
+## Activity Overview & Stale Repos
+
+When you work across many repositories, the first questions are usually "where
+have I been active?" and "what's gone quiet?" — not the full commit log. These
+two modes answer that without relying on any commit-message conventions.
+
+`--msummary` collapses each repo to a single line — commit count, last activity,
+and authors — sorted most-recently-active first. It honors git log filters, so
+you can scope it to a window or an author:
+
+```bash
+$ mgitlog --mroot ~/work --since="1 month ago" --msummary
+
+REPO      COMMITS  LAST ACTIVITY  AUTHORS
+api             12  2 days ago     jane, tom
+frontend         8  15 hours ago   jane
+checkout         3  3 weeks ago    tom
+payments         0  -              -
+```
+
+`--mstale DURATION` lists only the repositories whose last commit is older than
+the given age (`30d`, `2w`, `6m`, `1y`, or a bare number of days). Repos with no
+commits are reported too — handy for spotting abandoned or forgotten services:
+
+```bash
+$ mgitlog --mroot ~/work --mstale 30d
+
+REPO      LAST COMMIT  DATE
+payments  no commits   -
+checkout  6 weeks ago  2026-05-02
+```
 
 ## Interleaved Cross-Repo View
 
